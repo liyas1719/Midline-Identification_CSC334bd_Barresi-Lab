@@ -29,27 +29,22 @@ print("Using device:", device)
 # In[2]:
 
 
-DATA_ROOT = Path("/Users/lasariaissa/final project/data")
-#ZIP_PATH = DATA_ROOT / "recodai-luc-scientific-image-forgery-detection.zip"
-#ZIP_DIR = DATA_ROOT / "recodai-luc"
+DATA_ROOT = Path("/workspaces/CSC334bd-Final-Project---Midline-Identification")
 
 TRAIN_IMG_DIR = DATA_ROOT / "images"
-#DATA_ROOT / "images"
-TRAIN_MASK_DIR = DATA_ROOT / "masks"
+TRAIN_MASK_DIR = DATA_ROOT / "masks (npy)"
 TEST_IMG_DIR  = DATA_ROOT / "test_images"
-#AMPLE_SUB_PATH = ZIP_DIR / "sample_submission.csv"  # Kaggle provides this
-
 
 # In[7]:
 
 
 # Parameters
-IMG_SIZE = 512   # can bump later
-BATCH_SIZE = 8   # keep small to start
-NUM_EPOCHS = 20   # short “toy” training; they can increase
+IMG_SIZE = 512   # can bump to 1024
+BATCH_SIZE = 1   # keep small to start (was using 8 in Jupyter, but decreased here)
+NUM_EPOCHS = 5   # short “toy” training; they can increase
 
 # For demo purposes, let's train on a small number of images (so that you can run the notebook)
-NUM_TRAIN_SAMPLES = 150   # try 100, 200, 500, etc.
+NUM_TRAIN_SAMPLES = 100   # try 100, 200, 500, etc. as more files are made
 
 
 # In[8]:
@@ -89,7 +84,7 @@ train_loader = DataLoader(
     train_ds_small,
     batch_size=BATCH_SIZE,   # put your old batch size here
     shuffle=True,
-    num_workers=4,
+    num_workers=0, #catered to github running, used 4 in Jupyter
     pin_memory=True,
 )
 
@@ -101,7 +96,6 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms as T
 import torch
-#changed augment
 class ForgeryDataset(Dataset):
     def __init__(self, image_paths, mask_by_id, img_size=256, augment=True):
         self.image_paths = image_paths
@@ -119,13 +113,6 @@ class ForgeryDataset(Dataset):
 
     def __len__(self):
         return len(self.image_paths) * (4 if self.augment else 1)
-#original
-    #def __len__(self):
-     #   return len(self.image_paths)
-
-    #def __getitem__(self, idx):
-     #   img_path = self.image_paths[idx]
-      #  case_id = Path(img_path).stem
 
     def __getitem__(self, idx):
         if self.augment:
@@ -175,7 +162,7 @@ class ForgeryDataset(Dataset):
             mask_img = self.mask_resize(mask_img)
             mask = T.ToTensor()(mask_img)[0]   # (H, W), float in [0, 1]
 
-# Convert binary line → Gaussian heatmap
+            # Convert binary line → Gaussian heatmap
             from scipy.ndimage import distance_transform_edt
 
             dist = distance_transform_edt(1 - mask.numpy())
@@ -190,21 +177,18 @@ class ForgeryDataset(Dataset):
             mask = torch.zeros((1, self.img_size, self.img_size), dtype=torch.float32)
 
         # ---------- AUGMENTATION ----------
-        #if self.augment and torch.rand(1) < 0.5:
-         #    image = torch.flip(image, dims=[2])
-          #   mask = torch.flip(mask, dims=[2])
-
+        #currently augments each image 3 times, this can be increased and other augmentations can be introduced
         if self.augment:
             if aug_id == 1:
-            # Horizontal flip
+                # Horizontal flip
                 image = torch.flip(image, dims=[2])
                 mask = torch.flip(mask, dims=[2])
             elif aug_id == 2:
-        # Vertical flip
+                # Vertical flip
                 image = torch.flip(image, dims=[1])
                 mask = torch.flip(mask, dims=[1])
             elif aug_id == 3:
-        # 180-degree rotation
+                # 180-degree rotation
                 image = torch.rot90(image, k=2, dims=[1, 2])
                 mask = torch.rot90(mask, k=2, dims=[1, 2])
 
@@ -237,25 +221,16 @@ n_train = int(0.8 * n_total)
 train_ds = ForgeryDataset(train_image_paths[:n_train], mask_by_id, IMG_SIZE, augment=True)
 val_ds   = ForgeryDataset(train_image_paths[n_train:], mask_by_id, IMG_SIZE, augment=True)
 
-train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0) #catered to GitHub, was using 2 num_workers
+val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0) #catered to GitHub, was using 2 num_workers
 
 len(train_ds), len(val_ds)
-
-
-# In[14]:
-
-
-print("img shape:", img.shape)     # should be (C, H, W)
-print("mask shape:", mask.shape)   # what is it?
-print("mask[0] shape:", mask[0].shape)
 
 
 # In[15]:
 
 
 import matplotlib.pyplot as plt
-#CHANGE THIS TO 5
 for i in range(20):
     img, mask, cid = train_ds[i]
 
@@ -339,25 +314,8 @@ class SmallUNet(nn.Module):
 
 # In[17]:
 
-
-#model = SmallUNet(in_channels=3, out_channels=1).to(device)
-#criterion = nn.BCEWithLogitsLoss()
 criterion = torch.nn.MSELoss()
 model = SmallUNet(in_channels=3, out_channels=1).to(device)
-
-# ADD: compute positive class weight (line sparsity)
-#pos_weight = torch.tensor([50.0], device=device)
-
-# mask: (B,1,H,W) with 0/1
-#pos_weight = (mask.numel() - mask.sum()) / mask.sum()
-#criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
-
-#criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-#criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0], device=device))
-#pos_weight = (1 - mask.sum() / mask.numel()) / (mask.sum() / mask.numel())
-# roughly: 0.998 / 0.002 ≈ 480
-#criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
-
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
@@ -401,7 +359,7 @@ MAX_VAL_BATCHES   = 10
 # In[20]:
 
 
-from tqdm.notebook import tqdm  # works best in Jupyter
+from tqdm import tqdm  # works best in Jupyter
 
 def train_one_epoch(model, loader, optimizer, max_batches=None):
     """
@@ -436,15 +394,11 @@ def train_one_epoch(model, loader, optimizer, max_batches=None):
         with torch.no_grad():
             # inference
             probs = logits[0, 0].cpu().numpy()
-#original below
-            #probs = torch.sigmoid(pred)
             print(
                 "loss:", loss.item(),
                 "pred mean:", probs.mean().item(),
                 "pred std:", probs.std().item()
             )
-
-        #loss = weighted_mse(outputs, masks, weight_factor=50.0)
 
         loss.backward()
         optimizer.step()
@@ -519,7 +473,7 @@ def eval_one_epoch(model, loader, max_batches=None):
 
 
 #chatgpt version
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 def train_one_epoch(model, loader, optimizer, max_batches=None, weight_factor=50.0):
     model.train()
