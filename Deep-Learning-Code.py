@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# Adapted from Lab 5 - Forgery Dataset, used ChatGPT where indicated
 
 # In[1]:
 
@@ -28,14 +29,14 @@ print("Using device:", device)
 
 # In[2]:
 
-
+# Identifying paths to access the training, mask and test images
 DATA_ROOT = Path("/workspaces/CSC334bd-Final-Project---Midline-Identification")
 
 TRAIN_IMG_DIR = DATA_ROOT / "images"
 TRAIN_MASK_DIR = DATA_ROOT / "masks (npy)"
 TEST_IMG_DIR  = DATA_ROOT / "test_images"
 
-# In[7]:
+# In[3]:
 
 
 # Parameters
@@ -47,9 +48,9 @@ NUM_EPOCHS = 5   # short “toy” training; they can increase
 NUM_TRAIN_SAMPLES = 100   # try 100, 200, 500, etc. as more files are made
 
 
-# In[8]:
+# In[4]:
 
-
+# Counting the number of training images and mask in the directory
 train_image_paths = sorted(glob.glob(str(TRAIN_IMG_DIR / "*.jpg")))
 print("Train images found:", len(train_image_paths))
 
@@ -57,18 +58,7 @@ train_mask_paths = sorted(glob.glob(str(TRAIN_MASK_DIR / "*.npy")))
 print("Train masks found:", len(train_mask_paths))
 
 
-# In[9]:
-
-
-mask_by_id = {
-    Path(p).stem: p
-    for p in glob.glob(str(TRAIN_MASK_DIR / "*.npy"))
-}
-
-list(mask_by_id.items())[:3]
-
-
-# In[10]:
+# In[5]:
 
 
 # Sample from the images to speed up demo
@@ -89,33 +79,35 @@ train_loader = DataLoader(
 )
 
 
-# In[11]:
+# In[6]:
 
-
+# Adapted with the support of ChatGPT for the augmentation and heatmap components
 import numpy as np
 from PIL import Image
 import torchvision.transforms as T
 import torch
-class ForgeryDataset(Dataset):
+class MidlineDataset(Dataset):
     def __init__(self, image_paths, mask_by_id, img_size=256, augment=True):
+        # Defining variables, adding augmentation
         self.image_paths = image_paths
         self.mask_by_id = mask_by_id
         self.img_size = img_size
         self.augment = augment
 
+        # Getting images to indicated dimentions
         self.img_transform = T.Compose([
             T.Resize((img_size, img_size)),
             T.ToTensor(),
         ])
-
         # We'll still use PIL Resize for masks
         self.mask_resize = T.Resize((img_size, img_size), interpolation=Image.NEAREST)
 
     def __len__(self):
-        return len(self.image_paths) * (4 if self.augment else 1)
+        return len(self.image_paths) * (4 if self.augment else 1) 
 
     def __getitem__(self, idx):
         if self.augment:
+            #accesses item based on whether or not each image is augmented
             img_idx = idx // 4
             aug_id = idx % 4
         else:
@@ -138,8 +130,8 @@ class ForgeryDataset(Dataset):
             # Ensure we end up with a 2D array (H, W)
             if mask_np.ndim == 3:
                 # Common case: (2, H, W) or (1, H, W)
+                # If multiple channels in mask image
                 if mask_np.shape[0] <= 2:
-                    # take first channel as "forgery" mask
                     mask_np = mask_np[0]         # -> (H, W) or (1, W)
                 elif mask_np.shape[-1] <= 2:
                     mask_np = mask_np[..., 0]
@@ -155,7 +147,7 @@ class ForgeryDataset(Dataset):
                 mask_np = mask_np.reshape(1, -1)
 
             # Binarize and convert to 0–255
-            mask_np = (mask_np > 0).astype("uint8") * 255
+            mask_np = (mask_np > 0).astype("uint8") * 255 # We also do this in the mask_creator code when generating a mask
 
             # Now PIL is happy: 2D array = grayscale image
             mask_img = Image.fromarray(mask_np)
@@ -163,21 +155,21 @@ class ForgeryDataset(Dataset):
             mask = T.ToTensor()(mask_img)[0]   # (H, W), float in [0, 1]
 
             # Convert binary line → Gaussian heatmap
+            # This helps us make better generalizations
             from scipy.ndimage import distance_transform_edt
 
+            # This helps us to try and close to the line
             dist = distance_transform_edt(1 - mask.numpy())
             sigma = 3.0  # try 2–5
             heatmap = np.exp(-(dist ** 2) / (2 * sigma ** 2))
 
             mask = torch.from_numpy(heatmap).unsqueeze(0).float()  # (1, H, W)
 
-           # mask = T.ToTensor()(mask_img)         # (1, H, W)
-            #mask = (mask > 0.5).float()
         else:
             mask = torch.zeros((1, self.img_size, self.img_size), dtype=torch.float32)
 
         # ---------- AUGMENTATION ----------
-        #currently augments each image 3 times, this can be increased and other augmentations can be introduced
+        #currently augments each image 3 times, this can be increased and other augmentations can be introduced (cropping, flipping, etc)
         if self.augment:
             if aug_id == 1:
                 # Horizontal flip
@@ -196,30 +188,30 @@ class ForgeryDataset(Dataset):
         return image, mask, case_id
 
 
-# In[12]:
+# In[7]:
 
 
 # Make sure things look OK
 
 import random, csv
 
+#picks a random mask and outputs important information like the shape, dtype and min/max
 some_case = random.choice(list(mask_by_id.keys()))
 m = np.load(mask_by_id[some_case])
 print("case_id:", some_case)
 print("mask shape:", m.shape, "dtype:", m.dtype)
 print("min/max:", m.min(), m.max())
-#print(sum(m))
 
 
-# In[13]:
+# In[8]:
 
 
 # simple split – could also stratify based on "has mask"
 n_total = len(train_image_paths)
 n_train = int(0.8 * n_total)
 
-train_ds = ForgeryDataset(train_image_paths[:n_train], mask_by_id, IMG_SIZE, augment=True)
-val_ds   = ForgeryDataset(train_image_paths[n_train:], mask_by_id, IMG_SIZE, augment=True)
+train_ds = MidlineDataset(train_image_paths[:n_train], mask_by_id, IMG_SIZE, augment=True) #making sure to augment to increase size of dataset
+val_ds   = MidlineDataset(train_image_paths[n_train:], mask_by_id, IMG_SIZE, augment=True) #making sure to augment to increase size of dataset
 
 train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0) #catered to GitHub, was using 2 num_workers
 val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0) #catered to GitHub, was using 2 num_workers
@@ -227,9 +219,9 @@ val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_work
 len(train_ds), len(val_ds)
 
 
-# In[15]:
+# In[9]:
 
-
+# Written with the hlpe of ChatGPT to be able to visualize my numpy arrays over the images
 import matplotlib.pyplot as plt
 for i in range(20):
     img, mask, cid = train_ds[i]
@@ -237,6 +229,7 @@ for i in range(20):
     img_np  = img.permute(1, 2, 0).numpy()   # (H, W, 3)
     mask_np = mask[0].numpy()                # (H, W)
 
+    # prints out the first 5 images and their augmentations overlayed with the masks to visualize
     plt.figure(figsize=(4, 4))
     plt.imshow(img_np)
     plt.imshow(mask_np, cmap="Reds", alpha=0.4)
@@ -245,9 +238,9 @@ for i in range(20):
     plt.show()
 
 
-# In[16]:
+# In[10]:
 
-
+# Building the model
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
@@ -312,9 +305,10 @@ class SmallUNet(nn.Module):
 
 
 
-# In[17]:
+# In[11]:
 
-criterion = torch.nn.MSELoss()
+# Written with the help of ChatGPT
+criterion = torch.nn.MSELoss() # MSE chosen due to it's efficacy with this type of learning
 model = SmallUNet(in_channels=3, out_channels=1).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -326,13 +320,12 @@ def weighted_mse(pred, target, weight_factor=50.0):
     weight_factor: how much to boost line pixels
     """
     weight = torch.ones_like(target)
-    weight[target > 0] = weight_factor  # boost line pixels
+    weight[target > 0] = weight_factor  # helps to boost the line pixels so that they are understood to be important
     return ((pred - target)**2 * weight).mean()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 
-# In[18]:
+# In[12]:
 
 
 def iou(preds, targets, thresh=0.5, eps=1e-6):
@@ -348,18 +341,17 @@ def iou(preds, targets, thresh=0.5, eps=1e-6):
     return iou.mean()
 
 
-# In[19]:
+# In[13]:
 
-
-# These parameters will make it go faster, but perform worse than usuing all the data
+# Setting more parameters
 MAX_TRAIN_BATCHES = 10   # cap batches per epoch
 MAX_VAL_BATCHES   = 10
 
 
-# In[20]:
+# In[14]:
+# Adapted with the help of ChatGPT
 
-
-from tqdm import tqdm  # works best in Jupyter
+from tqdm import tqdm  # adapted for GitHub
 
 def train_one_epoch(model, loader, optimizer, max_batches=None):
     """
@@ -416,6 +408,7 @@ def train_one_epoch(model, loader, optimizer, max_batches=None):
     if total_samples == 0:
         return 0.0, 0.0
 
+    #computes important information regarding learning (iou is much less important in this context and is almost always close to 0)
     avg_loss = running_loss / total_samples
     avg_iou  = running_iou / total_samples
     return avg_loss, avg_iou
@@ -449,7 +442,7 @@ def eval_one_epoch(model, loader, max_batches=None):
             bs = images.size(0)
 
             outputs = model(images)
-            loss = weighted_mse(output, mask, weight_factor=50.0)
+            loss = weighted_mse(output, mask, weight_factor=50.0) 
 
             #loss = criterion(outputs, masks)
             probs = torch.sigmoid(outputs)
@@ -464,12 +457,13 @@ def eval_one_epoch(model, loader, max_batches=None):
     if total_samples == 0:
         return 0.0, 0.0
 
+    #computes important information regarding learning (iou is much less important in this context and is almost always close to 0)
     avg_loss = running_loss / total_samples
     avg_iou  = running_iou / total_samples
     return avg_loss, avg_iou
 
 
-# In[21]:
+# In[15]:
 
 
 #chatgpt version
@@ -560,7 +554,7 @@ def eval_one_epoch(model, loader, max_batches=None, weight_factor=50.0):
 
 # In[22]:
 
-
+# Runs training
 for epoch in range(1, NUM_EPOCHS + 1):
     print(f"\nEpoch {epoch}/{NUM_EPOCHS}")
     train_loss, train_iou = train_one_epoch(model, train_loader, optimizer)
@@ -571,31 +565,6 @@ for epoch in range(1, NUM_EPOCHS + 1):
         f"| train_loss={train_loss:.4f}, train_iou={train_iou:.4f} "
         f"| val_loss={val_loss:.4f}, val_iou={val_iou:.4f}"
     )
-
-
-# In[23]:
-
-
-model.eval()
-with torch.no_grad():
-    for batch_idx, batch in enumerate(val_loader):
-        images, masks = batch[:2]  # take first two elements
-        images = images.to(device)
-        outputs = model(images)
-
-        img = images[0].cpu().permute(1,2,0).numpy()
-        pred = outputs[0,0].cpu().numpy()
-        target = masks[0,0].cpu().numpy()
-
-        plt.figure(figsize=(8,4))
-        plt.imshow(img)
-        plt.imshow(pred, cmap='Reds', alpha=0.5)
-        plt.imshow(target, cmap='Greens', alpha=0.3)
-        plt.axis('off')
-        plt.show()
-
-        if batch_idx >= 5:
-            break
 
 
 # In[24]:
@@ -675,7 +644,7 @@ print("Dataset length:", len(train_ds))
 # In[27]:
 
 
-class ForgeryTestDataset(Dataset):
+class MidlineTestDataset(Dataset):
     def __init__(self, image_dir, img_size=256):
         self.image_paths = sorted(glob.glob(str(image_dir / "*.png")))
         self.img_size = img_size
@@ -701,7 +670,7 @@ class ForgeryTestDataset(Dataset):
 from torch.utils.data import DataLoader
 
 # Create test dataset & dataloader from all PNGs in TEST_IMG_DIR
-test_ds = ForgeryTestDataset(TEST_IMG_DIR, IMG_SIZE)
+test_ds = MidlineTestDataset(TEST_IMG_DIR, IMG_SIZE)
 test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
 print("Number of test images:", len(test_ds))
@@ -845,8 +814,7 @@ print("probs min/max/mean/std:", probs.min(), probs.max(), probs.mean(), probs.s
 
 
 # In[37]:
-
-
+# To be able to visualize predicted mask, written with help of ChatGPT
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -881,104 +849,35 @@ with torch.no_grad():
         else:
             print(f"Skipping save for blank mask for case {case_id[0]}.")
 
-        # Append annotation (you may need to update this logic)
-        # annotation = "authentic" or something else
-        #pred_annotations.append((case_id[0], annotation))
-
-# For the local small dataset, we can just build submission directly:
-#submission = pd.DataFrame(pred_annotations, columns=["case_id", "annotation"])
-#submission.head()
-
-
-# In[39]:
-
-
-image, mask, case_id = train_ds[0]
-
-plt.figure(figsize=(10,4))
-plt.subplot(1,2,1)
-plt.title("Image")
-plt.imshow(image.permute(1,2,0))
-plt.axis("off")
-
-plt.subplot(1,2,2)
-plt.title("GT mask")
-plt.imshow(mask[0], cmap="hot")
-plt.colorbar()
-plt.axis("off")
-plt.show()
-
-print("mask min/max:", mask.min().item(), mask.max().item())
-print("mask mean:", mask.mean().item())
 
 
 # In[285]:
-
+# Check training on one image to see if it works, written with the help of ChatGPT
 
 model.train()
 img, mask, _ = train_ds[10]
+# Add batch dimension and send to device
 img = img.unsqueeze(0).to(device)
 mask = mask.unsqueeze(0).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-for i in range(100):
+for i in range(500): # train just 1 image 500 times
     optimizer.zero_grad()
     output = model(img)
     loss = weighted_mse(output, mask, weight_factor=50.0)
     loss.backward()
     optimizer.step()
 
-    if i % 10 == 0:
+    if i % 100 == 0: #prints out every 100 to check functionality
         print(f"iter {i}, loss: {loss.item()}")
         plt.imshow(output[0,0].detach().cpu(), cmap="hot")
         plt.show()
 
 
-# In[40]:
-
-
-print("min:", probs.min(), "max:", probs.max())
-
-plt.figure(figsize=(12,4))
-
-plt.subplot(1,3,1)
-plt.imshow(probs, cmap="hot")
-plt.title("Heatmap (auto-scaled)")
-plt.colorbar()
-
-plt.subplot(1,3,2)
-plt.imshow(probs > 0.5)
-plt.title("Threshold @ 0.5")
-
-plt.subplot(1,3,3)
-plt.imshow(probs > 0.3)
-plt.title("Threshold @ 0.3")
-
-plt.show()
-
-
-# In[216]:
-
-
-total = 0
-fg = 0
-for _, mask, _ in train_ds:
-    fg += mask.sum().item()
-    total += mask.numel()
-
-print("Foreground %:", fg / total)
-
-
-# In[217]:
-
-
-train_ds = Subset(train_ds, [0])  # pick 1 image
-# train until loss ~0
-
 
 # In[81]:
-
+# Training on just 5 images to confirm efficacy, written with the help of ChatGPT
 
 import torch
 import torch.nn as nn
@@ -1029,45 +928,6 @@ for i in range(num_iters):
         plt.show()
 
 
-# In[220]:
-
-
-import torch
-import matplotlib.pyplot as plt
-
-# Make sure model is in training mode
-model.train()
-
-# Get one image and mask
-img, mask, _ = train_ds[0]
-
-# Add batch dimension and send to device
-img = img.unsqueeze(0).to(device)
-mask = mask.unsqueeze(0).to(device)
-
-# Optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-# Safe weight factor
-weight_factor = 10.0  # start smaller to avoid gradient explosion
-
-# Training loop
-for i in range(1000):
-    optimizer.zero_grad()
-    
-    # Forward pass
-    output = model(img)
-    
-    # Compute weighted MSE
-    loss = weighted_mse(output, mask, weight_factor=weight_factor)
-    
-    # Check for NaNs
-    if torch.isnan(loss) or torch.isinf(loss):
-        print(f"Iteration {i}: Loss is NaN or Inf. Stopping training.")
-        break
-
-
-
 # In[82]:
 
 
@@ -1104,17 +964,6 @@ with torch.no_grad():
             mask_image.save(f"predicted_mask_{case_id[0]}.png")
         else:
             print(f"Skipping save for blank mask for case {case_id[0]}.")
-
-        # Append annotation (you may need to update this logic)
-        # annotation = "authentic" or something else
-        #pred_annotations.append((case_id[0], annotation))
-
-# For the local small dataset, we can just build submission directly:
-#submission = pd.DataFrame(pred_annotations, columns=["case_id", "annotation"])
-#submission.head()
-
-
-# In[ ]:
 
 
 
