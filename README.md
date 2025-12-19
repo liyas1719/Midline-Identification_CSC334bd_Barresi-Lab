@@ -9,6 +9,8 @@ Most packages used in this code will need to be downloaded into the terminal usi
 4. pip install torch
 5. pip install tqdm
 6. pip install torch torchvision
+7. pip install matplotlib
+
 
 To run the code if these are installed in the terminal, you can use python Deep-Learning-Code.py
 
