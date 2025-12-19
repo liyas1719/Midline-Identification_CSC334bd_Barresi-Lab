@@ -25,8 +25,8 @@ The dataset used here was created by me, with images sourced from previous and c
 
 ## Current Functionality
 
-The largest drawback of this code right now is not having a suffienct and consistent dataset to train the model on. Many of the images used have different amounts of background noise, as well as be taken from multiple angles. We, as scientists who work with zebrafish, know to identify the shape of the eyes and find the area between then to identify the midline, however this code doesn't know what it is looking at. Thus, it is not particularly accurate, but it does demonstrate capabilities to learn (as loss decreases throughout the epochs), but with more data to train on, the hope is it will get better (which it has as I have expanded the dataset throughout this process).
+This code runs a Small UNet and MSE. The largest drawback of this code right now is not having a suffienct and consistent dataset to train the model on. Many of the images used have different amounts of background noise, as well as be taken from multiple angles. We, as scientists who work with zebrafish, know to identify the shape of the eyes and find the area between then to identify the midline, however this code doesn't know what it is looking at. Thus, it is not particularly accurate, but it does demonstrate capabilities to learn (as loss decreases throughout the epochs), but with more data to train on, the hope is it will get better (which it has as I have expanded the dataset throughout this process). 
 
 ## Credit
 
-Much of this code is adapted from our Lab 5 project on Data Forgery, and ChatGPT was used to help with this process. Many thanks to Halie Rando for all the support, can't wait to see where this goes from here!
+Much of this code is adapted from our Lab 5 project on Data Forgery, and ChatGPT was used to help with this process. Many thanks to Professor Halie Rando for all the support, can't wait to see where this goes from here!
